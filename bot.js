@@ -45,7 +45,11 @@ function configuredBots() {
 }
 
 function normalizeToken(value) {
-  return String(value || '').trim().replace(/^(['"])(.*)\1$/, '$2').trim();
+  return String(value || '')
+    .trim()
+    .replace(/^(['"])(.*)\1$/, '$2')
+    .replace(/^Bot\s+/i, '')
+    .trim();
 }
 
 const sessions = new Map();
@@ -366,6 +370,12 @@ function attachBot(bot) {
 
   client.on('error', markLoginError);
   client.on('shardError', markLoginError);
+  client.on('debug', (message) => addLog('info', `Bot ${bot.number} Discord: ${message}`));
+  client.on('warn', (message) => addLog('error', `Bot ${bot.number} Discord warning: ${message}`));
+  client.ws.on('shardReady', (shardId) => addLog('info', `Bot ${bot.number} gateway shard ${shardId} is ready.`));
+  client.ws.on('shardReconnecting', (shardId) => addLog('info', `Bot ${bot.number} gateway shard ${shardId} is reconnecting.`));
+  client.ws.on('shardDisconnect', (event, shardId) => addLog('error', `Bot ${bot.number} gateway shard ${shardId} disconnected (${event.code}).`));
+  client.on('invalidated', () => markLoginError(new Error('Discord invalidated this session. Reset the bot token and update Render.')));
 
   client.on('voiceStateUpdate', (oldState, newState) => {
     if (newState.id !== client.user?.id) return;
@@ -376,7 +386,10 @@ function attachBot(bot) {
   Promise.race([
     login,
     new Promise((_, reject) => setTimeout(() => reject(new Error('Discord login timed out after 30 seconds. Check the token and Render network logs.')), 30_000)),
-  ]).catch(markLoginError);
+  ]).catch((error) => {
+    markLoginError(error);
+    if (botState.status !== 'online') client.destroy();
+  });
 }
 
 function requireAdmin(request, response, next) {
