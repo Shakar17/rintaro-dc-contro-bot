@@ -53,18 +53,25 @@ function normalizeToken(value) {
 }
 
 async function validateDiscordToken(token) {
-  let response;
-  try {
-    response = await fetch('https://discord.com/api/v10/users/@me', {
-      headers: { Authorization: `Bot ${token}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch (error) {
-    throw new Error(`Discord API preflight failed: ${error.message}`);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    let response;
+    try {
+      response = await fetch('https://discord.com/api/v10/users/@me', {
+        headers: { Authorization: `Bot ${token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch (error) {
+      throw new Error(`Discord API preflight failed: ${error.message}`);
+    }
+    if (response.ok) return;
+    if (response.status === 401) throw new Error('Invalid Discord bot token. Reset the token in Discord Developer Portal and update Render.');
+    if (response.status === 429 && attempt < 3) {
+      const retryAfter = Number(response.headers.get('retry-after')) || 5;
+      await new Promise((resolve) => setTimeout(resolve, Math.ceil(retryAfter * 1000) + (attempt * 250)));
+      continue;
+    }
+    throw new Error(`Discord API preflight returned HTTP ${response.status}.`);
   }
-  if (response.ok) return;
-  if (response.status === 401) throw new Error('Invalid Discord bot token. Reset the token in Discord Developer Portal and update Render.');
-  throw new Error(`Discord API preflight returned HTTP ${response.status}.`);
 }
 
 const sessions = new Map();
