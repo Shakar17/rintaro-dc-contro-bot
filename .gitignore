@@ -1,0 +1,6 @@
+node_modules/
+.env
+.evn
+npm-debug.log*
+audio/*
+!audio/.gitkeep

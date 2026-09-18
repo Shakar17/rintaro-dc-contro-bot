@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: dcbot3
+    runtime: node
+    rootDir: .
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DISCORD_TOKEN_1
+        sync: false
+      - key: DISCORD_TOKEN_2
+        sync: false
+      - key: DISCORD_TOKEN_3
+        sync: false
+      - key: DISCORD_TOKEN_4
+        sync: false
+      - key: DISCORD_TOKEN_5
+        sync: false
+      - key: WEB_ADMIN_KEY
+        sync: false
+      - key: GUILD_ID
+        sync: false

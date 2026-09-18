@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice Control</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@400;500;600&display=swap');
+    :root {
+      --ink: #f3f0e8;
+      --muted: #a5aaa2;
+      --line: rgba(239, 235, 218, .14);
+      --paper: #111615;
+      --card: rgba(19, 25, 23, .82);
+      --green: #d5f36b;
+      --green-dark: #a8c94a;
+      --lime: #d5f36b;
+      --red: #f27f6b;
+      --shadow: 0 24px 80px rgba(0, 0, 0, .3);
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper); }
+    @keyframes drift { from { transform: scale(1.04) translate3d(-1%, -1%, 0); } to { transform: scale(1.1) translate3d(1%, 1%, 0); } }
+    @keyframes reveal { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(213, 243, 107, .12); } 50% { box-shadow: 0 0 0 6px rgba(213, 243, 107, 0); } }
+    @keyframes sweep { from { transform: translateX(-130%); } to { transform: translateX(230%); } }
+    body::before { content: ''; position: fixed; inset: 0; z-index: 1; background: linear-gradient(115deg, rgba(9, 14, 13, .9), rgba(11, 17, 15, .58) 54%, rgba(39, 32, 25, .65)); pointer-events: none; }
+    body::after { content: ''; position: fixed; inset: 0; z-index: 1; opacity: .12; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E"); pointer-events: none; }
+    body { margin: 0; color: var(--ink); background: var(--paper); font: 15px/1.5 'DM Sans', sans-serif; }
+    .background-video { position: fixed; inset: -5%; z-index: 0; width: 110%; height: 110%; object-fit: cover; pointer-events: none; filter: saturate(.72) contrast(1.08); animation: drift 24s ease-in-out infinite alternate; }
+    .shell { position: relative; z-index: 2; max-width: 1180px; margin: auto; padding: 48px 26px 70px; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    header { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 34px; }
+    .eyebrow { color: var(--green); font: 500 11px/1.2 'DM Mono', monospace; letter-spacing: .16em; text-transform: uppercase; }
+    h1, h2, p { margin: 0; }
+    h1 { color: #fbf9f1; font: 500 clamp(42px, 6vw, 78px)/.9 'Space Grotesk', sans-serif; letter-spacing: -.06em; max-width: 700px; }
+    h2 { color: #f4f1e8; font: 500 23px/1 'Space Grotesk', sans-serif; letter-spacing: -.03em; }
+    .subtitle { color: var(--muted); margin-top: 17px; max-width: 560px; }
+    .pill { border: 1px solid rgba(213, 243, 107, .38); background: rgba(213, 243, 107, .08); border-radius: 999px; padding: 9px 13px; color: var(--green); font: 11px 'DM Mono', monospace; white-space: nowrap; }
+    .grid { display: grid; grid-template-columns: 1.08fr .92fr; gap: 16px; }
+    .panel { position: relative; overflow: hidden; background: var(--card); border: 1px solid var(--line); border-radius: 4px; box-shadow: var(--shadow); padding: 24px; backdrop-filter: blur(18px); animation: reveal .65s cubic-bezier(.2, .8, .2, 1) both; }
+    .grid .panel:nth-child(2) { animation-delay: .1s; }
+    .grid .panel:nth-child(3) { animation-delay: .18s; }
+    .grid .panel:nth-child(4) { animation-delay: .26s; }
+    .panel::before { content: ''; position: absolute; top: 0; left: 24px; right: 24px; height: 1px; background: linear-gradient(90deg, var(--green), transparent); opacity: .65; }
+    .panel.wide { grid-column: 1 / -1; }
+    .panel-head { display: flex; justify-content: space-between; gap: 15px; align-items: center; margin-bottom: 20px; }
+    .hint { color: var(--muted); font: 11px 'DM Mono', monospace; }
+    label { display: block; color: #b6bbb0; font: 500 10px 'DM Mono', monospace; letter-spacing: .1em; text-transform: uppercase; margin: 16px 0 8px; }
+    input, select { width: 100%; border: 1px solid var(--line); background: rgba(7, 12, 11, .5); color: var(--ink); border-radius: 2px; padding: 12px 13px; outline: none; }
+    input::placeholder { color: #737a72; }
+    input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(213, 243, 107, .1); }
+    select option { color: #111615; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+    .btn { position: relative; overflow: hidden; border: 0; border-radius: 2px; padding: 11px 15px; font: 700 11px 'DM Mono', monospace; letter-spacing: .02em; transition: transform .15s, background .15s, box-shadow .15s; }
+    .btn::after { content: ''; position: absolute; inset: 0 auto 0 -75%; width: 42%; background: rgba(255, 255, 255, .2); transform: skewX(-18deg); transition: none; }
+    .btn:hover::after { animation: sweep .55s ease; }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(0, 0, 0, .22); }
+    .btn.primary { background: var(--green); color: #18200e; }
+    .btn.primary:hover { background: #e4ff89; }
+    .btn.soft { background: rgba(213, 243, 107, .14); color: var(--green); border: 1px solid rgba(213, 243, 107, .28); }
+    .btn.outline { color: var(--green); background: transparent; border: 1px solid rgba(213, 243, 107, .42); }
+    .btn.danger { color: #281311; background: var(--red); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; box-shadow: none; }
+    .bots { display: grid; gap: 2px; }
+    .bot { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid rgba(239, 235, 218, .1); padding: 12px 0; }
+    .bot:last-child { border-bottom: 0; }
+    .bot-name { color: #f4f1e8; font-weight: 700; }
+    .bot-tag { display: block; color: var(--muted); font: 11px 'DM Mono', monospace; margin-top: 3px; }
+    .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font: 11px 'DM Mono', monospace; }
+    .status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #69716a; }
+    .status.online { color: var(--green); }
+    .status.online::before { background: var(--green); box-shadow: 0 0 0 4px rgba(213, 243, 107, .12); animation: glow 2.2s ease-in-out infinite; }
+    .status.error { color: var(--red); }
+    .status.error::before { background: var(--red); }
+    .upload { border: 1px dashed rgba(213, 243, 107, .38); padding: 16px; background: rgba(213, 243, 107, .04); }
+    .file-row { display: flex; gap: 10px; align-items: center; }
+    input[type=file] { padding: 9px; color: var(--muted); }
+    input[type=range] { accent-color: var(--green); padding: 0; }
+    .audio-list { display: grid; gap: 8px; margin-top: 14px; }
+    .audio-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border-bottom: 1px solid rgba(239, 235, 218, .1); }
+    .audio-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e9e6dc; font-family: 'DM Mono', monospace; font-size: 12px; }
+    .logs { background: rgba(4, 8, 7, .76); border: 1px solid rgba(213, 243, 107, .12); color: #c8d5b0; min-height: 130px; max-height: 230px; overflow: auto; padding: 15px; font: 11px/1.7 'DM Mono', monospace; }
+    .log-error { color: #ff9b89; }
+    .notice { display: none; margin-bottom: 15px; padding: 11px 13px; border: 1px solid rgba(242, 127, 107, .35); border-radius: 2px; background: rgba(242, 127, 107, .12); color: #ffb4a5; font: 12px 'DM Mono', monospace; }
+    .login { max-width: 480px; margin: 14vh auto; }
+    .login .panel { padding: 34px; }
+    .login h1 { font-size: 54px; margin-top: 10px; }
+    .hidden { display: none !important; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; } }
+    @media (max-width: 800px) { header { display: block; } .pill { display: inline-block; margin-top: 22px; } .grid { grid-template-columns: 1fr; } .panel.wide { grid-column: auto; } }
+    @media (max-width: 480px) { .shell { padding: 28px 14px 44px; } .panel, .login .panel { padding: 20px; } .row { grid-template-columns: 1fr; } .file-row { display: block; } .file-row .btn { margin-top: 9px; width: 100%; } .panel-head { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <video class="background-video" autoplay muted loop playsinline poster="/background.jpg" aria-hidden="true">
+    <source src="/background.mp4" type="video/mp4">
+  </video>
+  <main id="loginView" class="shell login">
+    <div class="panel">
+      <div class="eyebrow">Web voice control</div>
+      <h1>Enter the control room.</h1>
+      <p class="subtitle">Use the private dashboard key configured as <b>WEB_ADMIN_KEY</b>.</p>
+      <label for="keyInput">Dashboard key</label>
+      <input id="keyInput" type="password" autocomplete="current-password" placeholder="Paste your private key">
+      <div class="actions"><button class="btn primary" id="loginButton">Open dashboard</button></div>
+      <div id="loginError" class="notice"></div>
+    </div>
+  </main>
+
+  <main id="appView" class="shell hidden">
+    <header>
+      <div><div class="eyebrow">Web voice control</div><h1>Voice control, without the clutter.</h1><p class="subtitle">Control every configured bot from this dashboard: join, play, stop, and leave.</p></div>
+      <div class="pill" id="lastUpdated">Waiting for connection</div>
+    </header>
+    <div id="notice" class="notice"></div>
+    <section class="grid">
+      <article class="panel">
+        <div class="panel-head"><h2>Bot fleet</h2><button class="btn outline" id="refreshButton">Refresh</button></div>
+        <div id="bots" class="bots"><p class="hint">Loading bot status...</p></div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><h2>Room control</h2><span class="hint">All online bots</span></div>
+        <div class="row"><div><label for="guildSelect">Server</label><select id="guildSelect"><option value="">Choose a server</option></select></div><div><label for="channelSelect">Voice channel</label><select id="channelSelect" disabled><option value="">Choose a channel</option></select></div></div>
+        <div class="actions"><button class="btn primary" data-action="join">Join all bots</button><button class="btn soft" data-action="stop">Stop all audio</button><button class="btn danger" data-action="disconnect">Leave all bots</button></div>
+        <p class="hint" style="margin-top:14px">The bots need View Channel, Connect, and Speak permissions.</p>
+      </article>
+      <article class="panel wide">
+        <div class="panel-head"><h2>Audio library</h2><div class="actions" style="margin-top:0"><label class="hint" style="margin:0; text-transform:none; letter-spacing:0"><input id="loopMode" type="checkbox"> Loop mode</label><label class="hint" for="volumeControl" style="margin:0; text-transform:none; letter-spacing:0">Volume <input id="volumeControl" type="range" min="0" max="1000" value="100" style="width:140px; vertical-align:middle"><output id="volumeValue">100%</output></label><button class="btn danger" id="clearAudioButton" type="button">Clear library</button></div></div>
+        <form id="uploadForm" class="upload"><div class="file-row"><input type="file" id="audioFile" accept="audio/*,.mp3,.wav,.ogg,.m4a,.webm" required><button class="btn primary" type="submit">Upload audio</button></div></form>
+        <div id="audioList" class="audio-list"><p class="hint">No audio loaded yet.</p></div>
+      </article>
+      <article class="panel wide"><div class="panel-head"><h2>Activity log</h2><span class="hint">Latest events</span></div><div id="logs" class="logs">Waiting for logs...</div></article>
+    </section>
+  </main>
+  <script>
+    const state = { key: sessionStorage.getItem('voiceAdminKey') || '', context: { guilds: [] }, audio: [] };
+    const $ = (id) => document.getElementById(id);
+    const notice = (message, target = $('notice')) => { target.textContent = message; target.style.display = 'block'; clearTimeout(target.hideTimer); target.hideTimer = setTimeout(() => { target.style.display = 'none'; }, 6000); };
+    async function api(path, options = {}) {
+      const headers = { 'x-admin-key': state.key, ...(options.headers || {}) };
+      const response = await fetch(path, { ...options, headers });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+      return data;
+    }
+    function showDashboard() { $('loginView').classList.add('hidden'); $('appView').classList.remove('hidden'); refresh(); }
+    $('loginButton').addEventListener('click', async () => { state.key = $('keyInput').value.trim(); if (!state.key) return notice('Enter your dashboard key.', $('loginError')); try { await api('/api/bots'); sessionStorage.setItem('voiceAdminKey', state.key); showDashboard(); } catch (error) { notice(error.message, $('loginError')); } });
+    $('keyInput').addEventListener('keydown', (event) => { if (event.key === 'Enter') $('loginButton').click(); });
+    $('refreshButton').addEventListener('click', refresh);
+    $('clearAudioButton').addEventListener('click', clearAudio);
+    $('volumeControl').addEventListener('input', () => { $('volumeValue').value = `${$('volumeControl').value}%`; });
+    $('guildSelect').addEventListener('change', () => { const guild = state.context.guilds.find((item) => item.id === $('guildSelect').value); $('channelSelect').innerHTML = '<option value="">Choose a channel</option>'; (guild?.channels || []).forEach((channel) => $('channelSelect').add(new Option(channel.name, channel.id))); $('channelSelect').disabled = !guild; });
+    document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => control(button.dataset.action)));
+    async function refresh() { try { const [bots, context, audio, logs] = await Promise.all([api('/api/bots'), api('/api/discord-context'), api('/api/audio'), api('/api/logs')]); renderBots(bots); state.context = context; state.audio = audio; renderGuilds(); renderAudio(); renderLogs(logs); $('lastUpdated').textContent = `Updated ${new Date().toLocaleTimeString()}`; } catch (error) { notice(error.message); if (/401|403/.test(error.message)) { sessionStorage.removeItem('voiceAdminKey'); $('appView').classList.add('hidden'); $('loginView').classList.remove('hidden'); } } }
+    function renderBots(bots) { $('bots').innerHTML = bots.map((bot) => `<div class="bot"><div><span class="bot-name">Bot ${bot.number}</span><span class="bot-tag">${escapeHtml(bot.tag || bot.message || 'No status message')}</span></div><span class="status ${bot.status}">${escapeHtml(bot.status)}</span></div>`).join('') || '<p class="hint">No bot slots configured.</p>'; }
+    function renderGuilds() { const current = $('guildSelect').value; $('guildSelect').innerHTML = '<option value="">Choose a server</option>'; state.context.guilds.forEach((guild) => $('guildSelect').add(new Option(guild.name, guild.id))); if (state.context.guilds.some((guild) => guild.id === current)) { $('guildSelect').value = current; $('guildSelect').dispatchEvent(new Event('change')); } }
+    function renderAudio() { $('audioList').innerHTML = state.audio.length ? state.audio.map((file) => `<div class="audio-item"><span class="audio-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span><button class="btn soft" data-play="${escapeHtml(file.name)}">Play on all bots</button></div>`).join('') : '<p class="hint">Upload an audio file to begin.</p>'; document.querySelectorAll('[data-play]').forEach((button) => button.addEventListener('click', () => control('play', button.dataset.play))); }
+    function renderLogs(logs) { $('logs').innerHTML = logs.length ? logs.slice().reverse().map((entry) => `<div class="${entry.level === 'error' ? 'log-error' : ''}">[${new Date(entry.time).toLocaleTimeString()}] ${escapeHtml(entry.message)}</div>`).join('') : 'No activity yet.'; }
+    async function control(action, filename) { const guildId = $('guildSelect').value; const channelId = $('channelSelect').value; const loop = $('loopMode').checked; const volume = Number($('volumeControl').value); if (action === 'join' && (!guildId || !channelId)) return notice('Choose a server and voice channel first.'); if (action === 'play' && !filename) return notice('Choose an audio file first.'); try { notice(action === 'play' ? (loop ? `Starting loop playback at ${volume}%...` : `Sending audio at ${volume}%...`) : 'Applying web control...'); const result = await api('/api/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, guildId, channelId, filename, loop, volume }) }); const failed = (result.errors || []).join(' '); notice(failed || `${result.completed}/${result.total} bot action completed.`); await refresh(); } catch (error) { notice(error.message); } }
+    async function clearAudio() { if (!state.audio.length) return notice('Audio library is already empty.'); if (!confirm(`Delete all ${state.audio.length} audio file(s) and stop playback?`)) return; try { const result = await api('/api/audio', { method: 'DELETE' }); notice(`${result.removed} audio file(s) cleared.`); await refresh(); } catch (error) { notice(error.message); } }
+    $('uploadForm').addEventListener('submit', async (event) => { event.preventDefault(); const file = $('audioFile').files[0]; if (!file) return; const form = new FormData(); form.append('audio', file); try { await api('/api/audio/upload', { method: 'POST', body: form }); $('audioFile').value = ''; notice('Audio uploaded.'); await refresh(); } catch (error) { notice(error.message); } });
+    function escapeHtml(value) { return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character])); }
+    if (state.key) { $('keyInput').value = state.key; showDashboard(); }
+  </script>
+</body>
+</html>
