@@ -59,6 +59,13 @@ function normalizeToken(value) {
 
 const sessions = new Map();
 const bots = [];
+let gatewayLoginQueue = Promise.resolve();
+
+function queueGatewayLogin(login) {
+  const next = gatewayLoginQueue.then(login, login);
+  gatewayLoginQueue = next.catch(() => {});
+  return next;
+}
 
 function getAudioPath(filename) {
   if (!filename || path.basename(filename) !== filename) return null;
@@ -401,7 +408,7 @@ function attachBot(bot) {
     botState.statusMessage = retryAttempt ? `Reconnecting (attempt ${retryAttempt + 1})` : 'Connecting';
 
     addLog('info', `Bot ${bot.number} -> connecting`);
-    client.login(bot.token).catch((error) => {
+    queueGatewayLogin(() => client.login(bot.token)).catch((error) => {
       handleInitialFailure(error);
       client = null;
       botState.client = null;
@@ -435,6 +442,9 @@ function attachBot(bot) {
       addLog('info', `Bot ${bot.number} Discord: ${message}`);
     });
     nextClient.on('warn', (message) => addLog('error', `Bot ${bot.number} Discord warning: ${message}`));
+    nextClient.rest.on('rateLimited', (info) => {
+      addLog('error', `Bot ${bot.number} Discord REST rate limit: ${info.method} ${info.route}; retry-after ${Math.ceil(info.retryAfter / 1000)} seconds.`);
+    });
     nextClient.on('resume', (replayedEvents) => {
       botState.status = 'online';
       botState.statusMessage = 'Connected to Discord';
