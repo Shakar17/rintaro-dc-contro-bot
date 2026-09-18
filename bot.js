@@ -27,7 +27,6 @@ const port = Number(process.env.PORT) || 10000;
 const adminKey = process.env.WEB_ADMIN_KEY;
 const guildId = /^\d{17,20}$/.test(process.env.GUILD_ID || '') ? process.env.GUILD_ID : undefined;
 const startupStaggerMs = Math.max(1_000, Number(process.env.DISCORD_START_DELAY_MS) || 8_000);
-const gatewayTimeoutMs = Math.max(30_000, Number(process.env.DISCORD_LOGIN_TIMEOUT_MS) || 45_000);
 const logs = [];
 fs.mkdirSync(audioDir, { recursive: true });
 
@@ -347,93 +346,109 @@ function disconnect(botNumber, guildIdToDisconnect) {
 
 function attachBot(bot) {
   if (!bot.token || bot.token.startsWith('replace-with-')) {
-    bots.push({ ...bot, client: null, status: 'missing-token', statusMessage: 'Add this bot token in Render.' });
+    bots.push({ number: bot.number, client: null, status: 'missing-token', statusMessage: 'Add this bot token in Render.' });
     addLog('error', `Bot ${bot.number} is not started: DISCORD_TOKEN_${bot.number} is missing in Render.`);
     return;
   }
-  const botState = { ...bot, client: null, status: 'connecting', statusMessage: 'Waiting to connect' };
+  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+  const botState = { number: bot.number, client, status: 'connecting', statusMessage: 'Waiting to connect' };
   bots.push(botState);
   const startupDelay = (bot.number - 1) * startupStaggerMs;
-  let attempt = 0;
+  let retryAttempt = 0;
+  let loginInFlight = false;
+  let permanentlyFailed = false;
   let retryTimer;
 
-  const scheduleRetry = (error) => {
-    const retryDelay = Math.min(60_000, 10_000 * (2 ** Math.min(attempt - 1, 2))) + ((bot.number - 1) * 2_000);
+  const scheduleRetry = () => {
+    if (permanentlyFailed || loginInFlight || botState.status === 'online') return;
+    retryAttempt += 1;
+    const retryDelay = Math.min(60_000, 10_000 * (2 ** Math.min(retryAttempt - 1, 2))) + ((bot.number - 1) * 2_000);
     botState.status = 'connecting';
     botState.statusMessage = `Retrying in ${Math.ceil(retryDelay / 1000)} seconds`;
-    addLog('info', `Bot ${bot.number} will retry Discord login in ${Math.ceil(retryDelay / 1000)} seconds.`);
+    addLog('info', `Bot ${bot.number} will retry login in ${Math.ceil(retryDelay / 1000)} seconds.`);
     clearTimeout(retryTimer);
-    retryTimer = setTimeout(connect, retryDelay);
+    retryTimer = setTimeout(startLogin, retryDelay);
   };
 
-  async function connect() {
-    attempt += 1;
-    const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
-    botState.client = client;
+  const handleInitialFailure = (error) => {
+    loginInFlight = false;
+    if (botState.status === 'online') return;
+    const invalidToken = error.code === 4004 || /invalid token/i.test(error.message || '');
+    const invalidIntents = [4013, 4014].includes(error.code);
+    permanentlyFailed = invalidToken || invalidIntents;
+    botState.status = permanentlyFailed ? 'error' : 'connecting';
+    botState.statusMessage = invalidToken
+      ? 'Invalid Discord token'
+      : invalidIntents
+        ? 'Invalid or disallowed gateway intents'
+        : error.message || 'Discord gateway error';
+    addLog('error', `Bot ${bot.number} connection failed: ${botState.statusMessage}.`);
+    if (!permanentlyFailed) scheduleRetry();
+  };
+
+  function startLogin() {
+    if (permanentlyFailed || loginInFlight || botState.status === 'online') return;
+    loginInFlight = true;
     botState.status = 'connecting';
-    botState.statusMessage = `Connecting (attempt ${attempt})`;
-    let handledFailure = false;
+    botState.statusMessage = retryAttempt ? `Reconnecting (attempt ${retryAttempt + 1})` : 'Connecting';
 
-    addLog('info', `Bot ${bot.number} connecting...`);
+    addLog('info', `Bot ${bot.number} -> connecting`);
+    client.login(bot.token).catch(handleInitialFailure);
+  }
 
-    client.once('ready', (readyClient) => {
+  client.once('ready', (readyClient) => {
+      loginInFlight = false;
+      retryAttempt = 0;
       botState.status = 'online';
       botState.statusMessage = 'Connected to Discord';
       botState.tag = readyClient.user.tag;
-      attempt = 0;
-      addLog('info', `Bot ${bot.number} connected successfully as ${readyClient.user.tag}. Servers: ${readyClient.guilds.cache.size}.`);
+      addLog('info', `Bot ${bot.number} -> READY (${readyClient.user.tag}); ${readyClient.guilds.cache.size} server(s).`);
     });
 
-    const handleFailure = (error) => {
-      if (handledFailure || botState.status === 'online') return;
-      handledFailure = true;
-      const invalidToken = error.code === 4004 || /invalid token/i.test(error.message || '');
-      const permanent = invalidToken || [4013, 4014].includes(error.code);
-      botState.status = permanent ? 'error' : 'connecting';
-      botState.statusMessage = invalidToken
-        ? 'Invalid Discord token'
-        : error.code === 4013 || error.code === 4014
-          ? 'Invalid or disallowed gateway intents'
-          : error.message || 'Discord gateway error';
-      addLog('error', `Bot ${bot.number} connection failed: ${botState.statusMessage}.`);
-      client.destroy();
-      if (!permanent) scheduleRetry(error);
-    };
-
-    client.on('error', handleFailure);
-    client.on('shardError', handleFailure);
+    client.on('error', (error) => {
+      addLog('error', `Bot ${bot.number} connection failed: ${error.message || 'Discord client error'}.`);
+    });
+    client.on('shardError', (error) => {
+      addLog('error', `Bot ${bot.number} gateway error: ${error.message || 'shard error'}.`);
+    });
     client.on('debug', (message) => {
       if (/token|authorization/i.test(message)) return;
       addLog('info', `Bot ${bot.number} Discord: ${message}`);
     });
     client.on('warn', (message) => addLog('error', `Bot ${bot.number} Discord warning: ${message}`));
-    client.on('resume', (replayedEvents) => addLog('info', `Bot ${bot.number} Discord connection resumed (${replayedEvents} events replayed).`));
+    client.on('resume', (replayedEvents) => {
+      botState.status = 'online';
+      botState.statusMessage = 'Connected to Discord';
+      addLog('info', `Bot ${bot.number} -> READY (connection resumed; ${replayedEvents} events replayed).`);
+    });
     client.ws.on('shardReady', (shardId) => addLog('info', `Bot ${bot.number} gateway shard ${shardId} is ready.`));
     client.ws.on('shardResume', (shardId, replayedEvents) => addLog('info', `Bot ${bot.number} gateway shard ${shardId} resumed (${replayedEvents} events replayed).`));
-    client.ws.on('shardReconnecting', (shardId) => addLog('info', `Bot ${bot.number} gateway shard ${shardId} is reconnecting.`));
-    client.ws.on('shardDisconnect', (event, shardId) => addLog('error', `Bot ${bot.number} gateway shard ${shardId} disconnected (${event.code}).`));
-    client.on('invalidated', () => handleFailure(new Error('Discord invalidated this session. Reset the bot token and update Render.')));
+    client.ws.on('shardReconnecting', (shardId) => {
+      botState.status = 'connecting';
+      botState.statusMessage = 'Reconnecting through Discord.js';
+      addLog('info', `Bot ${bot.number} -> reconnecting (shard ${shardId}).`);
+    });
+    client.ws.on('shardDisconnect', (event, shardId) => {
+      botState.status = 'connecting';
+      botState.statusMessage = `Disconnected (${event.code}); Discord.js will reconnect`;
+      addLog('error', `Bot ${bot.number} -> disconnected (shard ${shardId}, code ${event.code}).`);
+    });
+    client.on('invalidated', () => {
+      permanentlyFailed = true;
+      botState.status = 'error';
+      botState.statusMessage = 'Discord invalidated this session. Reset the token.';
+      addLog('error', `Bot ${bot.number} connection failed: Discord invalidated this session.`);
+    });
 
     client.on('voiceStateUpdate', (oldState, newState) => {
       if (newState.id !== client.user?.id) return;
       addLog('info', `Bot ${bot.number} Discord voice state: ${oldState.channelId || 'none'} -> ${newState.channelId || 'none'}.`);
     });
 
-    try {
-      let timeout;
-      const loginTimeout = new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(`Discord gateway login timed out after ${gatewayTimeoutMs / 1000} seconds.`)), gatewayTimeoutMs);
-      });
-      await Promise.race([
-        client.login(bot.token),
-        loginTimeout,
-      ]).finally(() => clearTimeout(timeout));
-    } catch (error) {
-      handleFailure(error);
-    }
-  }
-
-  setTimeout(connect, startupDelay);
+  setTimeout(() => {
+    addLog('info', `Bot ${bot.number} -> starting`);
+    startLogin();
+  }, startupDelay);
 }
 
 function requireAdmin(request, response, next) {
