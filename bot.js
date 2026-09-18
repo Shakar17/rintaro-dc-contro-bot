@@ -52,6 +52,21 @@ function normalizeToken(value) {
     .trim();
 }
 
+async function validateDiscordToken(token) {
+  let response;
+  try {
+    response = await fetch('https://discord.com/api/v10/users/@me', {
+      headers: { Authorization: `Bot ${token}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    throw new Error(`Discord API preflight failed: ${error.message}`);
+  }
+  if (response.ok) return;
+  if (response.status === 401) throw new Error('Invalid Discord bot token. Reset the token in Discord Developer Portal and update Render.');
+  throw new Error(`Discord API preflight returned HTTP ${response.status}.`);
+}
+
 const sessions = new Map();
 const bots = [];
 
@@ -382,14 +397,19 @@ function attachBot(bot) {
     addLog('info', `Bot ${bot.number} Discord voice state: ${oldState.channelId || 'none'} -> ${newState.channelId || 'none'}.`);
   });
 
-  const login = client.login(bot.token);
-  Promise.race([
-    login,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('Discord login timed out after 30 seconds. Check the token and Render network logs.')), 30_000)),
-  ]).catch((error) => {
-    markLoginError(error);
-    if (botState.status !== 'online') client.destroy();
-  });
+  validateDiscordToken(bot.token)
+    .then(() => {
+      addLog('info', `Bot ${bot.number} token accepted by Discord API. Opening gateway connection.`);
+      const login = client.login(bot.token);
+      return Promise.race([
+        login,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Discord gateway login timed out after 30 seconds. The token is valid, but Render cannot complete the Discord websocket connection.')), 30_000)),
+      ]);
+    })
+    .catch((error) => {
+      markLoginError(error);
+      if (botState.status !== 'online') client.destroy();
+    });
 }
 
 function requireAdmin(request, response, next) {
