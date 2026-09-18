@@ -62,9 +62,14 @@ async function probeDiscordGateway() {
     const response = await fetch('https://discord.com/api/v10/gateway', {
       signal: AbortSignal.timeout(10_000),
     });
+    if (response.status === 429) {
+      const retryAfter = response.headers.get('retry-after') || 'unknown';
+      addLog('info', `Discord Gateway HTTP probe was rate-limited (429); retry-after ${retryAfter}s. This does not indicate a Gateway websocket failure.`);
+      return;
+    }
     addLog(response.ok ? 'info' : 'error', `Discord Gateway HTTP probe: ${response.status}.`);
   } catch (error) {
-    addLog('error', `Discord Gateway HTTP probe failed: ${error.message}.`);
+    addLog('info', `Discord Gateway HTTP probe unavailable: ${error.message}. Discord.js will report the actual Gateway connection state.`);
   }
 }
 
