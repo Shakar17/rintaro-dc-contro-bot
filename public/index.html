@@ -71,6 +71,8 @@
     .bot-tag { display: block; color: var(--muted); font: 11px 'DM Mono', monospace; margin-top: 3px; }
     .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font: 11px 'DM Mono', monospace; }
     .status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #69716a; }
+    .status.connecting { color: #d9c875; }
+    .status.connecting::before { background: #d9c875; animation: glow 1.2s ease-in-out infinite; }
     .status.online { color: var(--green); }
     .status.online::before { background: var(--green); box-shadow: 0 0 0 4px rgba(213, 243, 107, .12); animation: glow 2.2s ease-in-out infinite; }
     .status.error { color: var(--red); }

@@ -39,9 +39,13 @@ function addLog(level, message) {
 function configuredBots() {
   return Array.from({ length: 5 }, (_, index) => ({
     number: index + 1,
-    token: process.env[`DISCORD_TOKEN_${index + 1}`],
-    status: process.env[`DISCORD_TOKEN_${index + 1}`] && !process.env[`DISCORD_TOKEN_${index + 1}`].startsWith('replace-with-') ? 'starting' : 'missing-token',
+    token: normalizeToken(process.env[`DISCORD_TOKEN_${index + 1}`]),
+    status: normalizeToken(process.env[`DISCORD_TOKEN_${index + 1}`]) ? 'connecting' : 'missing-token',
   }));
+}
+
+function normalizeToken(value) {
+  return String(value || '').trim().replace(/^(['"])(.*)\1$/, '$2').trim();
 }
 
 const sessions = new Map();
@@ -353,16 +357,26 @@ function attachBot(bot) {
     addLog('info', `Bot ${bot.number} login successful as ${readyClient.user.tag}. Servers: ${readyClient.guilds.cache.size}.`);
   });
 
+  const markLoginError = (error) => {
+    if (botState.status === 'online') return;
+    botState.status = 'error';
+    botState.statusMessage = error.code === 4004 ? 'Invalid token' : error.message || 'Discord gateway error';
+    addLog('error', `Bot ${bot.number} login failed: ${botState.statusMessage}.`);
+  };
+
+  client.on('error', markLoginError);
+  client.on('shardError', markLoginError);
+
   client.on('voiceStateUpdate', (oldState, newState) => {
     if (newState.id !== client.user?.id) return;
     addLog('info', `Bot ${bot.number} Discord voice state: ${oldState.channelId || 'none'} -> ${newState.channelId || 'none'}.`);
   });
 
-  client.login(bot.token).catch((error) => {
-    botState.status = 'error';
-    botState.statusMessage = error.code === 4004 ? 'Invalid token' : error.message;
-    addLog('error', `Bot ${bot.number} login failed: ${botState.statusMessage}.`);
-  });
+  const login = client.login(bot.token);
+  Promise.race([
+    login,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('Discord login timed out after 30 seconds. Check the token and Render network logs.')), 30_000)),
+  ]).catch(markLoginError);
 }
 
 function requireAdmin(request, response, next) {
