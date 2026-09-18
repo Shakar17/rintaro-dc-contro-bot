@@ -1,7 +1,11 @@
 const path = require('node:path');
 const fs = require('node:fs');
-const dotenvPath = fs.existsSync(path.join(__dirname, '.env')) ? '.env' : '.evn';
+const dns = require('node:dns');
+const dotenvPath = fs.existsSync(path.join(__dirname, '.env'))
+  ? path.join(__dirname, '.env')
+  : path.join(__dirname, '.evn');
 require('dotenv').config({ path: dotenvPath });
+dns.setDefaultResultOrder('ipv4first');
 
 const { spawn } = require('node:child_process');
 const express = require('express');
@@ -51,6 +55,17 @@ function normalizeToken(value) {
     .replace(/^(['"])(.*)\1$/, '$2')
     .replace(/^Bot\s+/i, '')
     .trim();
+}
+
+async function probeDiscordGateway() {
+  try {
+    const response = await fetch('https://discord.com/api/v10/gateway', {
+      signal: AbortSignal.timeout(10_000),
+    });
+    addLog(response.ok ? 'info' : 'error', `Discord Gateway HTTP probe: ${response.status}.`);
+  } catch (error) {
+    addLog('error', `Discord Gateway HTTP probe failed: ${error.message}.`);
+  }
 }
 
 const sessions = new Map();
@@ -350,8 +365,8 @@ function attachBot(bot) {
     addLog('error', `Bot ${bot.number} is not started: DISCORD_TOKEN_${bot.number} is missing in Render.`);
     return;
   }
-  const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
-  const botState = { number: bot.number, client, status: 'connecting', statusMessage: 'Waiting to connect' };
+  let client = null;
+  const botState = { number: bot.number, client: null, status: 'connecting', statusMessage: 'Waiting to connect' };
   bots.push(botState);
   const startupDelay = (bot.number - 1) * startupStaggerMs;
   let retryAttempt = 0;
@@ -388,15 +403,30 @@ function attachBot(bot) {
 
   function startLogin() {
     if (permanentlyFailed || loginInFlight || botState.status === 'online') return;
+    if (!client || client.ws.destroyed) {
+      client = createClient();
+      botState.client = client;
+    }
     loginInFlight = true;
     botState.status = 'connecting';
     botState.statusMessage = retryAttempt ? `Reconnecting (attempt ${retryAttempt + 1})` : 'Connecting';
 
     addLog('info', `Bot ${bot.number} -> connecting`);
-    client.login(bot.token).catch(handleInitialFailure);
+    client.login(bot.token).catch((error) => {
+      handleInitialFailure(error);
+      client = null;
+      botState.client = null;
+    });
   }
 
-  client.once('ready', (readyClient) => {
+  function createClient() {
+    const nextClient = new Client({
+      intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+      rest: { timeout: 15_000 },
+      ws: { version: 10 },
+    });
+
+    nextClient.once('ready', (readyClient) => {
       loginInFlight = false;
       retryAttempt = 0;
       botState.status = 'online';
@@ -405,45 +435,48 @@ function attachBot(bot) {
       addLog('info', `Bot ${bot.number} -> READY (${readyClient.user.tag}); ${readyClient.guilds.cache.size} server(s).`);
     });
 
-    client.on('error', (error) => {
+    nextClient.on('error', (error) => {
       addLog('error', `Bot ${bot.number} connection failed: ${error.message || 'Discord client error'}.`);
     });
-    client.on('shardError', (error) => {
+    nextClient.on('shardError', (error) => {
       addLog('error', `Bot ${bot.number} gateway error: ${error.message || 'shard error'}.`);
     });
-    client.on('debug', (message) => {
+    nextClient.on('debug', (message) => {
       if (/token|authorization/i.test(message)) return;
       addLog('info', `Bot ${bot.number} Discord: ${message}`);
     });
-    client.on('warn', (message) => addLog('error', `Bot ${bot.number} Discord warning: ${message}`));
-    client.on('resume', (replayedEvents) => {
+    nextClient.on('warn', (message) => addLog('error', `Bot ${bot.number} Discord warning: ${message}`));
+    nextClient.on('resume', (replayedEvents) => {
       botState.status = 'online';
       botState.statusMessage = 'Connected to Discord';
       addLog('info', `Bot ${bot.number} -> READY (connection resumed; ${replayedEvents} events replayed).`);
     });
-    client.ws.on('shardReady', (shardId) => addLog('info', `Bot ${bot.number} gateway shard ${shardId} is ready.`));
-    client.ws.on('shardResume', (shardId, replayedEvents) => addLog('info', `Bot ${bot.number} gateway shard ${shardId} resumed (${replayedEvents} events replayed).`));
-    client.ws.on('shardReconnecting', (shardId) => {
+    nextClient.ws.on('shardReady', (shardId) => addLog('info', `Bot ${bot.number} gateway shard ${shardId} is ready.`));
+    nextClient.ws.on('shardResume', (shardId, replayedEvents) => addLog('info', `Bot ${bot.number} gateway shard ${shardId} resumed (${replayedEvents} events replayed).`));
+    nextClient.ws.on('shardReconnecting', (shardId) => {
       botState.status = 'connecting';
       botState.statusMessage = 'Reconnecting through Discord.js';
       addLog('info', `Bot ${bot.number} -> reconnecting (shard ${shardId}).`);
     });
-    client.ws.on('shardDisconnect', (event, shardId) => {
+    nextClient.ws.on('shardDisconnect', (event, shardId) => {
       botState.status = 'connecting';
       botState.statusMessage = `Disconnected (${event.code}); Discord.js will reconnect`;
       addLog('error', `Bot ${bot.number} -> disconnected (shard ${shardId}, code ${event.code}).`);
     });
-    client.on('invalidated', () => {
+    nextClient.on('invalidated', () => {
       permanentlyFailed = true;
       botState.status = 'error';
       botState.statusMessage = 'Discord invalidated this session. Reset the token.';
       addLog('error', `Bot ${bot.number} connection failed: Discord invalidated this session.`);
     });
 
-    client.on('voiceStateUpdate', (oldState, newState) => {
-      if (newState.id !== client.user?.id) return;
+    nextClient.on('voiceStateUpdate', (oldState, newState) => {
+      if (newState.id !== nextClient.user?.id) return;
       addLog('info', `Bot ${bot.number} Discord voice state: ${oldState.channelId || 'none'} -> ${newState.channelId || 'none'}.`);
     });
+
+    return nextClient;
+  }
 
   setTimeout(() => {
     addLog('info', `Bot ${bot.number} -> starting`);
@@ -519,6 +552,7 @@ app.post('/api/audio/upload', requireAdmin, upload.single('audio'), (request, re
 });
 
 app.listen(port, '0.0.0.0', () => console.log(`Web dashboard listening on port ${port}`));
+probeDiscordGateway();
 
 const configured = configuredBots();
 const tokenCount = configured.filter((bot) => bot.token && !bot.token.startsWith('replace-with-')).length;
