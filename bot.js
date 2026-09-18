@@ -30,7 +30,7 @@ const audioDir = path.join(rootDir, 'audio');
 const port = Number(process.env.PORT) || 10000;
 const adminKey = process.env.WEB_ADMIN_KEY;
 const guildId = /^\d{17,20}$/.test(process.env.GUILD_ID || '') ? process.env.GUILD_ID : undefined;
-const startupStaggerMs = Math.max(1_000, Number(process.env.DISCORD_START_DELAY_MS) || 8_000);
+const startupStaggerMs = Math.max(5_000, Number(process.env.DISCORD_START_DELAY_MS) || 20_000);
 const logs = [];
 fs.mkdirSync(audioDir, { recursive: true });
 
@@ -55,22 +55,6 @@ function normalizeToken(value) {
     .replace(/^(['"])(.*)\1$/, '$2')
     .replace(/^Bot\s+/i, '')
     .trim();
-}
-
-async function probeDiscordGateway() {
-  try {
-    const response = await fetch('https://discord.com/api/v10/gateway', {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (response.status === 429) {
-      const retryAfter = response.headers.get('retry-after') || 'unknown';
-      addLog('info', `Discord Gateway HTTP probe was rate-limited (429); retry-after ${retryAfter}s. This does not indicate a Gateway websocket failure.`);
-      return;
-    }
-    addLog(response.ok ? 'info' : 'error', `Discord Gateway HTTP probe: ${response.status}.`);
-  } catch (error) {
-    addLog('info', `Discord Gateway HTTP probe unavailable: ${error.message}. Discord.js will report the actual Gateway connection state.`);
-  }
 }
 
 const sessions = new Map();
@@ -557,7 +541,6 @@ app.post('/api/audio/upload', requireAdmin, upload.single('audio'), (request, re
 });
 
 app.listen(port, '0.0.0.0', () => console.log(`Web dashboard listening on port ${port}`));
-probeDiscordGateway();
 
 const configured = configuredBots();
 const tokenCount = configured.filter((bot) => bot.token && !bot.token.startsWith('replace-with-')).length;
